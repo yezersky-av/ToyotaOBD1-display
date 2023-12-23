@@ -3,9 +3,15 @@
 #include <ArduinoJson.h>
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
+
+#include "Vector2D.h"
+#include "Utils.h"
 #include "logo.h"
 #include "pin_config.h"
-#include "Utils.h"
+
+// Указываем размеры экрана
+#define SCREEN_WIDTH  170
+#define SCREEN_HEIGHT 320
 
 const char *ssid = "Toyota_OBD1web";
 
@@ -20,6 +26,15 @@ int lineSize = 20;
 bool connected = false;
 const int conColor = 0xfaa0; // #fe4b07
 const int disColor = 0x8b8d; // #8C7369
+
+const int interval = 1000 / 30;  // Интервал в миллисекундах (1000 мс / 60 Гц)
+
+unsigned long previousMillis = 0;  // Переменная для хранения времени последнего выполнения кода
+
+
+Shape displayShape;
+
+Vector2D points[4] = {Vector2D(0,0), Vector2D(169,0),Vector2D(169,319),Vector2D(0,319)};
 
 void renderData(String label, String text, int row, bool right = false){
   int dX = right ? 75 : 0;
@@ -99,25 +114,20 @@ void updateDisplay() {
   gfx->flush();
   gfx->setTextSize(2);
 
-  if(connected){
-    gfx->setTextColor(conColor, BLACK);
-  } else {
-    gfx->setTextColor(disColor);
-  }
-
-  gfx->drawRoundRect(0, 0, 170, 320, 0, connected ? conColor : disColor);
-  gfx->drawRoundRect(1, 1, 168, 318, 0, connected ? conColor : disColor);
+  gfx->drawRoundRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, connected ? conColor : disColor);
+  gfx->drawRoundRect(0, 0, SCREEN_WIDTH-1, SCREEN_HEIGHT-1, 0, connected ? conColor : disColor);
+  gfx->drawRoundRect(1, 1, SCREEN_WIDTH-2, SCREEN_HEIGHT-2, 0, connected ? conColor : disColor);
 
   // pulse
-  renderData(String("pulse ms"), String((const char*)dataStorage["pulse"]), 4);
+  renderData(String("pulse ms"), fillWidth(String((const char*)dataStorage["pulse"]), 4, ' '), 4);
   // timing
   renderData(fillWidth(String("timing"), 14, ' '), fillWidth(fillWidth(String((const char*)dataStorage["timing"]), 2), 7, ' '), 4,true);
   //pressure
-  renderData(String("pressure kPa"), String((const char*)dataStorage["pressure"]), 6);
+  renderData(String("pressure kPa"), fillWidth(String((const char*)dataStorage["pressure"]), 4, ' '), 6);
   // temperature
   renderData(fillWidth(String("tmp C"), 14, ' '), fillWidth(fillWidth(String((const char*)dataStorage["temperature"]), 3, '0'), 7, ' '), 6, true);
   // throttle
-  renderData(String("throttle"), fillWidth(String((const char*)dataStorage["throttle"]), 2, '0'), 8);
+  renderData(String("throttle"), fillWidth(fillWidth(String((const char*)dataStorage["throttle"]), 2, '0'), 4, ' '), 8);
   // afr
   renderData(fillWidth(String("afr"), 14, ' '), fillWidth(String((const char*)dataStorage["afr"]), 7, ' '), 8, true);
 
@@ -139,17 +149,83 @@ void updateDisplay() {
 }
 
 void displayConnectionLost() {
-  const int centerX = 84;       // X-координата центра спиннера
-  const int centerY = 159;      // Y-координата центра спиннера
+  renderData(String("WS Connecting..."), String(""), 2);
 
-  renderData(String("Connecting..."), String(""), 2);
+  // Очищаем экран
+  // gfx->fillScreen(0);
 
-  gfx->drawArc(centerX, centerY, 64, 65, millis(), millis() + (360/3), conColor);
-  gfx->drawArc(centerX, centerY, 64, 65, millis() + (360/3), millis() + (360/3)*2, disColor);
-  gfx->drawArc(centerX, centerY, 64, 65, millis() + (360/3)*2, millis(), BLACK);
+  Vector2D center = Vector2D(SCREEN_WIDTH/2, SCREEN_HEIGHT/2);
+  Vector2D direction = Vector2D(SCREEN_HEIGHT/2, SCREEN_HEIGHT/2);
+  Vector2D directionBefore = direction;
+  Vector2D directionAfter = direction;
+
+  float angle = millis()*0.002;
+  
+  direction.rotate(angle);
+  Vector2D nd = direction.normalize();
+  float afterAngle = angle+((PI/4) * (0.8 + abs(nd.x)));
+
+  directionAfter.rotate(afterAngle);
+
+  Vector2D intersection       = displayShape.findIntersection(center, direction);
+  Vector2D intersectionAfter  = displayShape.findIntersection(center, directionAfter);
+
+/*
+  gfx->drawLine(center.x, center.y, intersection.x, intersection.y, 0xFFFF);
+  gfx->drawLine(center.x, center.y, intersectionAfter.x, intersectionAfter.y, conColor);
+*/
+
+  if(intersection.x == intersectionAfter.x){
+    if(intersection.x == 0){
+      gfx->drawLine(0, intersection.y, 0, intersectionAfter.y, conColor);
+      gfx->drawLine(1, intersection.y, 1, intersectionAfter.y, conColor);
+    } else {
+      gfx->drawLine(169, intersection.y, 169, intersectionAfter.y, conColor);
+      gfx->drawLine(168, intersection.y, 168, intersectionAfter.y, conColor);
+    }
+  } else if (intersection.y == intersectionAfter.y) {
+    if(intersection.y == 0){
+      gfx->drawLine(intersection.x, 0, intersectionAfter.x, 0, conColor);
+      gfx->drawLine(intersection.x, 1, intersectionAfter.x, 1, conColor);
+    } else {
+      gfx->drawLine(intersection.x, 319, intersectionAfter.x, 319, conColor);
+      gfx->drawLine(intersection.x, 318, intersectionAfter.x, 318, conColor);
+    }
+  } else if(intersection.x == 0 && intersectionAfter.y == 0) {
+      gfx->drawLine(0, 0, 0, intersection.y, conColor);
+      gfx->drawLine(1, 0, 1, intersection.y, conColor);
+
+      gfx->drawLine(0, 0, intersectionAfter.x, 0, conColor);
+      gfx->drawLine(0, 1, intersectionAfter.x, 1, conColor);
+
+  } else if(intersection.y == 0 && intersectionAfter.x == 169) {
+      gfx->drawLine(intersection.x, 0, SCREEN_WIDTH, 0, conColor);
+      gfx->drawLine(intersection.x, 1, SCREEN_WIDTH, 1, conColor);
+
+      gfx->drawLine(168, 0, 168, intersectionAfter.y, conColor);
+      gfx->drawLine(169, 0, 169, intersectionAfter.y, conColor);
+  } else if(intersection.x == 169 && intersectionAfter.y == 319) {
+      gfx->drawLine(168, intersection.y, 168, SCREEN_HEIGHT, conColor);
+      gfx->drawLine(169, intersection.y, 169, SCREEN_HEIGHT, conColor);
+
+      gfx->drawLine(intersectionAfter.x, 318, SCREEN_WIDTH, 318, conColor);
+      gfx->drawLine(intersectionAfter.x, 319, SCREEN_WIDTH, 319, conColor);
+  } else if(intersection.y == 319 && intersectionAfter.x == 0) {
+      gfx->drawLine(0, 318, intersection.x, 318, conColor);
+      gfx->drawLine(0, 319, intersection.x, 319, conColor);
+
+      gfx->drawLine(0, intersectionAfter.y, 0, SCREEN_HEIGHT, conColor);
+      gfx->drawLine(1, intersectionAfter.y, 1, SCREEN_HEIGHT, conColor);
+  }
 }
 
+
 void setup() {
+  for(int i = 0; i < 4; i++){
+    displayShape.addVector(points[i]);
+  }
+  displayShape.createSegments();
+
   pinMode(PIN_POWER_ON, OUTPUT);
   digitalWrite(PIN_POWER_ON, HIGH);
 
@@ -166,8 +242,8 @@ void setup() {
   gfx->begin();
   gfx->fillScreen(BLACK);
   gfx->setRotation(0);
-  gfx->setTextColor(0xfaa0, BLACK);
-  gfx->draw16bitRGBBitmap(0, 1, (uint16_t *)gImage_logo, 170, 320);
+  gfx->setTextColor(conColor, BLACK);
+  gfx->draw16bitRGBBitmap(0, 1, (uint16_t *)gImage_logo, SCREEN_WIDTH, SCREEN_HEIGHT);
 
   delay(1500);
 
@@ -180,19 +256,33 @@ void setup() {
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(750);
 
-  gfx->fillScreen(BLACK);
+  gfx->fillScreen(BLACK); // REMOVE AFTER DEBUG
 
   dataStorage["pulse"] = dataStorage["temperature"] = dataStorage["speed"] = "---";
-  dataStorage["timing"] = dataStorage["throttle"] = "--";
   dataStorage["rpm"] = dataStorage["pressure"] = dataStorage["afr"] = "----";
+  dataStorage["timing"] = dataStorage["throttle"] = "--";
 
-  updateDisplay();
+  // updateDisplay();
 }
 
 void loop() {
-  webSocket.loop();
-  updateDisplay();
-  if(!connected){
-    displayConnectionLost();
+  unsigned long currentMillis = millis();
+
+  if(connected){
+    gfx->setTextColor(conColor, BLACK);
+  } else {
+    gfx->setTextColor(disColor);
   }
+
+  webSocket.loop();
+  if (currentMillis - previousMillis >= interval) {
+    
+    updateDisplay();
+    if(!connected){
+      displayConnectionLost();
+    }
+
+    previousMillis = currentMillis;
+  }
+
 }
